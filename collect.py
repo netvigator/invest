@@ -22,39 +22,57 @@
 #
 # Copyright 2021 Rick Graves
 #
+'''
+https://www.etfchannel.com/symbol/spyd/
+<td align="left" bgcolor="#FAFAFA" style="border-bottom: 1px solid #EEEEEE"><font 
+face="Arial" size="2" color="#555555">Total Net Assets:</font></td>
+<td colspan="2" align="left" bgcolor="#FFFFFF" style="border-bottom: 1px solid #EFEFEF"><font 
+face="Arial" size="2" color="#222222">$3,093,790,540</font></td>
+</tr>
+'''
+from datetime       import datetime, timedelta
 
-import json
+import requests
 
-import investpy
+from pytz           import timezone
 
-from Time           import _sFormatDateEu, _sFormatISOdate
-from Time.Convert   import getIsoDateFromOther
+from String.Find    import getRegExObj
+from String.Get     import getTextWithinFinders
 from Utils.Config   import getConfDict, getTupleOffCommaString
 
-dConf   = getConfDict( 'invest.ini' )
+dConf       = getConfDict( 'invest.ini' )
 
-tFunds  = getTupleOffCommaString( dConf['main']['funds'] )
+tFunds      = getTupleOffCommaString( dConf['main']['funds'] )
 
-dFunds  = dict.fromkeys( tFunds )
+dFunds      = dict.fromkeys( tFunds )
 
-def getNameOffSymbol( sSymbol ):
-    #
-    dInfo = investpy.search_etfs( by = 'symbol', value = sSymbol )
-    #
-    sName = dInfo['name'][0]
-    #
-    return sName
+sETFpage    = dConf['source']['url']
 
+tzEast      = timezone( 'US/Eastern' )
 
-tSymbolsNames = tuple( ( 
-    ( sSymbol, getNameOffSymbol( sSymbol ) )
-    for sSymbol in tFunds ) )
+dtNow       = datetime.now( tz = tzEast )
 
-dSymbolsNames = dict( tSymbolsNames )
+oFindAsOfHead   = getRegExObj( dConf['source']['as_of_head']  )
+oFindAsOfBeg    = getRegExObj( dConf['source']['beg_as_of']   )
+oFindAsOfEnd    = getRegExObj( dConf['source']['end_as_of']   )
+
+oFindAssetsHead = getRegExObj( dConf['source']['assets_head'] )
+oFindAssetsBeg  = getRegExObj( dConf['source']['beg_assets']  )
+oFindAssetsEnd  = getRegExObj( dConf['source']['end_assets']  )
+
 
 
 def getTotalAssets( sSymbol ):
     #
+    oR = requests.get( sETFpage % sSymbol.lower() )
+    #
+    tReturn = ( None, None )
+    #
+    if oR.status_code == 200:
+        #
+        sHTML = oR.text
+        #
+        
     sName = dSymbolsNames[ sSymbol ]
     #
     dFundInfo = investpy.get_etf_information(
@@ -66,25 +84,6 @@ def getTotalAssets( sSymbol ):
 
 
     
-
-def getRecentMarketDate():
-    #
-    sRecent = investpy.etfs.get_etf_recent_data(
-                etf     = dSymbolsNames[ tFunds[0] ],
-                country = 'united states',
-                as_json = True )
-    #
-    dRecent = json.loads( sRecent )
-    #
-    sRecentDateUSA = dRecent['recent'][-1]['date']
-    #
-    sRecentDateISO = getIsoDateFromOther(
-                        sRecentDateUSA,
-                        _sFormatDateEu,
-                        _sFormatISOdate )
-    #
-    return sRecentDateISO    
-
 
 def getTotalAssetsDict():
     #
