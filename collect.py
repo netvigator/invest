@@ -36,8 +36,9 @@ import requests
 
 from pytz           import timezone
 
+from File.Write     import QuickDump
 from String.Find    import getRegExObj
-from String.Get     import getTextWithinFinders
+from String.Get     import getTextWithinFinders as getTextIn
 from Utils.Config   import getConfDict, getTupleOffCommaString
 
 dConf       = getConfDict( 'invest.ini' )
@@ -52,14 +53,32 @@ tzEast      = timezone( 'US/Eastern' )
 
 dtNow       = datetime.now( tz = tzEast )
 
-oFindAsOfHead   = getRegExObj( dConf['source']['as_of_head']  )
-oFindAsOfBeg    = getRegExObj( dConf['source']['beg_as_of']   )
-oFindAsOfEnd    = getRegExObj( dConf['source']['end_as_of']   )
+oFindAsOfHead   = getRegExObj( dConf['source']['as_of_head' ] )
+oFindNextHead   = getRegExObj( dConf['source']['next_head'  ] )
+oFindAsOfBeg    = getRegExObj( dConf['source']['beg_as_of'  ] )
+oFindAsOfEnd    = getRegExObj( dConf['source']['end_as_of'  ] )
 
-oFindAssetsHead = getRegExObj( dConf['source']['assets_head'] )
-oFindAssetsBeg  = getRegExObj( dConf['source']['beg_assets']  )
-oFindAssetsEnd  = getRegExObj( dConf['source']['end_assets']  )
+oFindAssetsLine = getRegExObj( dConf['source']['assets_desc'] )
+oFindAssetsNext = getRegExObj( dConf['source']['next_desc'  ] )
+oFindAssetsBeg  = getRegExObj( dConf['source']['beg_assets' ] )
+oFindAssetsEnd  = getRegExObj( dConf['source']['end_assets' ] )
 
+
+
+def getTimeDeltaFromString( sAsOf ):
+    #
+    lParts = sAsOf.split( ',' )
+    #
+    kwargs = {}
+    #
+    for sPart in lParts:
+        #
+        lSubParts = sPart.split( ' ' )
+        #
+        kwargs[ lSubParts[ -1 ] ] = int( lSubParts[ -2 ] )
+        #
+    #
+    return timedelta( **kwargs )
 
 
 def getTotalAssets( sSymbol ):
@@ -70,20 +89,40 @@ def getTotalAssets( sSymbol ):
     #
     if oR.status_code == 200:
         #
-        sHTML = oR.text
+        sHTML   = oR.text
         #
-        
-    sName = dSymbolsNames[ sSymbol ]
+        sTable  = getTextIn( sHTML,  oFindAsOfHead,   oFindNextHead   )
+        #
+        if sTable:
+            #
+            sAsOf   = getTextIn( sTable, oFindAsOfBeg,    oFindAsOfEnd    ).strip()
+            #
+            sLine   = getTextIn( sTable, oFindAssetsLine, oFindAssetsNext )
+            #
+            sAssets = getTextIn( sLine,  oFindAssetsBeg,  oFindAssetsEnd  )
+            #
+            iAssets = int( sAssets.replace( ',', '' ) )
+            #
+            tReturn = iAssets, sAsOf
+            #
+        else:
+            #
+            # registration required to continue
+            #
+            sFileName = 'error_%s.html' % sSymbol
+            #
+            print( 'did not fetch table, '
+                   'what was fetched is in \tmp\%s' % sFileName )
+            #
+            QuickDump( sHTML, sFileName, bSayBytes = False )
+            #
+        #
     #
-    dFundInfo = investpy.get_etf_information(
-            etf     = sName,
-            country = 'united states',
-            as_json = True )
     #
-    return int( dFundInfo['Total Assets'] )
+    return tReturn
 
 
-    
+
 
 def getTotalAssetsDict():
     #
@@ -93,7 +132,7 @@ def getTotalAssetsDict():
         #
         dFunds[ sSymbol ] = iTotalAssets
 
-getTotalAssetsDict()
+# getTotalAssetsDict()
 
 
 if __name__ == "__main__":
@@ -103,8 +142,14 @@ if __name__ == "__main__":
     lProblems = []
     #
     print( dFunds )
-    print( getRecentMarketDate() )
-
     #
+    tTotalAssets = getTotalAssets( tFunds[0] )
+    #
+    print( tTotalAssets )
+    #
+    if tTotalAssets[1]:
+        #
+        print( dtNow - getTimeDeltaFromString( tTotalAssets[1] ) )
+        #
     #
     sayTestResult( lProblems )
