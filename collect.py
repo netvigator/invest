@@ -38,6 +38,8 @@ from pytz           import timezone
 
 from File.Write     import QuickDump
 from String.Find    import getRegExObj
+from Time.Convert   import getIsoDateTimeFromObj
+from Time.Output    import getNowIsoDateTimeFileNameSafe
 from String.Get     import getTextWithinFinders as getTextIn
 from Utils.Config   import getConfDict, getTupleOffCommaString
 
@@ -46,6 +48,7 @@ dConf       = getConfDict( 'invest.ini' )
 tFunds      = getTupleOffCommaString( dConf['main']['funds'] )
 
 dFunds      = dict.fromkeys( tFunds )
+dTimes      = dict.fromkeys( tFunds )
 
 sETFpage    = dConf['source']['url']
 
@@ -63,11 +66,14 @@ oFindAssetsNext = getRegExObj( dConf['source']['next_desc'  ] )
 oFindAssetsBeg  = getRegExObj( dConf['source']['beg_assets' ] )
 oFindAssetsEnd  = getRegExObj( dConf['source']['end_assets' ] )
 
+sName           = dConf['credentials']['name' ]
+sEmail          = dConf['credentials']['email']
+sLogInURL       = dConf['credentials']['url'  ]
 
 
-def getTimeDeltaFromString( sAsOf ):
+def getTimeDeltaFromString( sUpdated ):
     #
-    lParts = sAsOf.split( ',' )
+    lParts = sUpdated.split( ',' )
     #
     kwargs = {}
     #
@@ -95,7 +101,10 @@ def getTotalAssets( sSymbol ):
         #
         if sTable:
             #
-            sAsOf   = getTextIn( sTable, oFindAsOfBeg,    oFindAsOfEnd    ).strip()
+            sUpdated = getTextIn( sTable, oFindAsOfBeg, oFindAsOfEnd ).strip()
+            #
+            sAsOf = getIsoDateTimeFromObj(
+                dtNow - getTimeDeltaFromString( sUpdated ) )[:16]
             #
             sLine   = getTextIn( sTable, oFindAssetsLine, oFindAssetsNext )
             #
@@ -109,15 +118,15 @@ def getTotalAssets( sSymbol ):
             #
             # registration required to continue
             #
-            sFileName = 'error_%s.html' % sSymbol
+            sFileName = 'error_%s_%s.html' % (
+                    sSymbol, getNowIsoDateTimeFileNameSafe() )
             #
             print( 'did not fetch table, '
-                   'what was fetched is in \tmp\%s' % sFileName )
+                  r'what was fetched is in \tmp\%s' % sFileName )
             #
             QuickDump( sHTML, sFileName, bSayBytes = False )
             #
         #
-    #
     #
     return tReturn
 
@@ -126,13 +135,32 @@ def getTotalAssets( sSymbol ):
 
 def getTotalAssetsDict():
     #
-    for sSymbol in tFunds:
+    dPayLoad = { 'name' : sName,
+                 'email': sEmail,
+                 'abcw' : 'a',
+                 'cid'  : "91301" }
+    #
+    oLogin  = requests.post( sLogInURL, data = dPayLoad )
+    #
+    if oLogin.status_code == 200:
         #
-        iTotalAssets = getTotalAssets( sSymbol )
+        for sSymbol in tFunds:
+            #
+            tTotalAssets = getTotalAssets( sSymbol )
+            #
+            iTotalAssets, sAsOf = tTotalAssets
+            #
+            dFunds[ sSymbol ] = iTotalAssets
+            dTimes[ sSymbol ] = sAsOf
+            #
         #
-        dFunds[ sSymbol ] = iTotalAssets
+    else:
+        #
+        print( oLogin.text )
+        #
 
-# getTotalAssetsDict()
+
+getTotalAssetsDict()
 
 
 if __name__ == "__main__":
@@ -142,14 +170,6 @@ if __name__ == "__main__":
     lProblems = []
     #
     print( dFunds )
-    #
-    tTotalAssets = getTotalAssets( tFunds[0] )
-    #
-    print( tTotalAssets )
-    #
-    if tTotalAssets[1]:
-        #
-        print( dtNow - getTimeDeltaFromString( tTotalAssets[1] ) )
-        #
+    print( dTimes )
     #
     sayTestResult( lProblems )
