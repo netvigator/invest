@@ -167,7 +167,7 @@ def getTotalAssetsDict():
         #
 
 
-# getTotalAssetsDict()
+
 
 def getNewHeaderLine( tFunds = tFunds ):
     #
@@ -341,7 +341,8 @@ if __name__ == "__main__":
             'getNewFundsAdded( sHeaderLine ) should return 1' )
         #
     #
-    #print( dAssets )
-    #print( dTimes )
+    # getTotalAssetsDict()
+    # print( dAssets )
+    # print( dTimes )
     #
     sayTestResult( lProblems )
