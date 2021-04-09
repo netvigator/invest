@@ -31,30 +31,34 @@ face="Arial" size="2" color="#222222">$3,093,790,540</font></td>
 </tr>
 '''
 from datetime       import datetime, timedelta
-
+from os.path        import join
 import requests
 
 from pytz           import timezone
 
-from File.Write     import QuickDump
+from File.Spec      import getNameNoPathNoExt
+from File.Test      import isFileThere
+from File.Write     import openAppendClose, QuickDump
 from String.Find    import getRegExObj
 from Time.Convert   import getIsoDateTimeFromObj
 from Time.Output    import getNowIsoDateTimeFileNameSafe
 from String.Get     import getTextWithinFinders as getTextIn
 from Utils.Config   import getConfDict, getTupleOffCommaString
 
-dConf       = getConfDict( 'invest.ini' )
+class FundsOutOfOrderError( Exception ): pass
 
-tFunds      = getTupleOffCommaString( dConf['main']['funds'] )
+dConf           = getConfDict( 'invest.ini' )
 
-dFunds      = dict.fromkeys( tFunds )
-dTimes      = dict.fromkeys( tFunds )
+tFunds          = getTupleOffCommaString( dConf['main']['funds'] )
 
-sETFpage    = dConf['source']['url']
+dAssets         = dict.fromkeys( tFunds )
+dTimes          = dict.fromkeys( tFunds )
 
-tzEast      = timezone( 'US/Eastern' )
+sETFpage        = dConf['source']['url']
 
-dtNow       = datetime.now( tz = tzEast )
+tzEast          = timezone( 'US/Eastern' )
+
+dtNow           = datetime.now( tz = tzEast )
 
 oFindAsOfHead   = getRegExObj( dConf['source']['as_of_head' ] )
 oFindNextHead   = getRegExObj( dConf['source']['next_head'  ] )
@@ -69,6 +73,9 @@ oFindAssetsEnd  = getRegExObj( dConf['source']['end_assets' ] )
 sName           = dConf['credentials']['name' ]
 sEmail          = dConf['credentials']['email']
 sLogInURL       = dConf['credentials']['url'  ]
+
+sFileName       = dConf['main']['name'      ]
+sFileDir        = dConf['main']['directory' ]
 
 
 def getTimeDeltaFromString( sUpdated ):
@@ -118,13 +125,13 @@ def getTotalAssets( sSymbol ):
             #
             # registration required to continue
             #
-            sFileName = 'error_%s_%s.html' % (
+            sErrorFile = 'error_%s_%s.html' % (
                     sSymbol, getNowIsoDateTimeFileNameSafe() )
             #
             print( 'did not fetch table, '
-                  r'what was fetched is in \tmp\%s' % sFileName )
+                  r'what was fetched is in \tmp\%s' % sErrorFile )
             #
-            QuickDump( sHTML, sFileName, bSayBytes = False )
+            QuickDump( sHTML, sErrorFile, bSayBytes = False )
             #
         #
     #
@@ -150,8 +157,8 @@ def getTotalAssetsDict():
             #
             iTotalAssets, sAsOf = tTotalAssets
             #
-            dFunds[ sSymbol ] = iTotalAssets
-            dTimes[ sSymbol ] = sAsOf
+            dAssets[ sSymbol ] = iTotalAssets
+            dTimes[  sSymbol ] = sAsOf
             #
         #
     else:
@@ -160,8 +167,134 @@ def getTotalAssetsDict():
         #
 
 
-getTotalAssetsDict()
+# getTotalAssetsDict()
 
+def getNewHeaderLine( tFunds = tFunds ):
+    #
+    lHeader = [ 'date time' ]
+    lHeader.extend( tFunds )
+    #
+    return ','.join( lHeader )
+
+
+def getCsvHeaderLast( sFileDir, sFileName ):
+    #
+    sHeaderLine = sLastLine = None
+    #
+    if isFileThere( sFileDir, sFileName ):
+        #
+        print( '%s is there' % sFileName )
+        #
+        with open( join( sFileDir, sFileName ) ) as oFile:
+            #
+            for sLine in oFile:
+                #
+                sHeaderLine = sLine
+                #
+                break
+                #
+            #
+            for sLine in oFile:
+                #
+                sLastLine = sLine
+                #
+            #
+        #
+    else:
+        #
+        print( '%s is NOT there' % sFileName )
+        #
+        sHeaderLineNew = getNewHeaderLine()
+        #
+        openAppendClose( sHeaderLineNew, sFileDir, sFileName )
+        #
+        sHeaderLine = sHeaderLineNew
+        #
+    #
+    return sHeaderLine, sLastLine
+
+
+sHeaderLine, sLastLine = getCsvHeaderLast( sFileDir, sFileName )
+
+print( 'header line:', sHeaderLine.strip() )
+print( 'last   line:', sLastLine.strip()  )
+
+
+def getNewFundsAdded( sHeaderLine ):
+    #
+    return ( sHeaderLine and
+             len( sHeaderLine.split(',') ) - ( len( tFunds ) + 1 ) )
+
+
+iNewFundsAdded = getNewFundsAdded( sHeaderLine )
+
+
+def checkFundsInOrder( sHeaderLinePrior ):
+    #
+    sHeaderLineNew   = getNewHeaderLine()
+    #
+    lHeaderLinePrior = sHeaderLinePrior.split(',')
+    lHeaderLineNew   = sHeaderLineNew.split(',')
+    #
+    for i in range(len(lHeaderLinePrior)):
+        #
+        if i > 0 and lHeaderLinePrior[i] != lHeaderLineNew[i]:
+            #
+            raise FundsOutOfOrderError('Funds are suddenly out of order!')
+            #
+        #
+    #
+
+
+
+def getNewFileAddNewFunds( iNewFundsAdded ):
+    #
+    sNewFile = '%s.new' % getNameNoPathNoExt( sFileName )
+    #
+    oNewFile = open( join( sFileDir, sNewFile ), 'w' )
+    #
+    sAppendLine = '%s\n'
+    #
+    with open( join( sFileDir, sFileName ) ) as oFile:
+        #
+        for sLine in oFile:
+            #
+            sHeaderLinePrior = sLine
+            #
+            break
+            #
+        #
+        checkFundsInOrder( sHeaderLinePrior )
+        #
+        iWantLen = 1 + len( tFunds )
+        #
+        sNewFile.write( sAppendLine % getNewHeaderLine() )
+        #
+        lMoreZeros = [0] * iNewFundsAdded
+        #
+        for sLine in oFile:
+            #
+            lLine = sLine.split(',')
+            #
+            lLine.extend( lMoreZeros )
+            #
+            sNewFile.write( sAppendLine % ','.join( lLine ) )
+            #
+        #
+    #
+    oNewFile.close()
+
+
+'''
+lAssets = [ str( dAssets[ sFund ] ) for sFund in tFunds ]
+
+sAsOf   = max( dTimes.values() )
+#
+lAssets[ 0 : 0 ] = [ str( sAsOf ) ]
+
+openAppendClose( ','.join( lAssets ), sFileDir, sFileName )
+
+'''
 
 if __name__ == "__main__":
     #
@@ -169,7 +302,46 @@ if __name__ == "__main__":
     #
     lProblems = []
     #
-    print( dFunds )
-    print( dTimes )
+    #
+    lFunds = list( tFunds )
+    #
+    lFunds.reverse()
+    #
+    sHeaderLinePrior = getNewHeaderLine( lFunds )
+    #
+    try:
+        checkFundsInOrder( sHeaderLinePrior )
+    except FundsOutOfOrderError:
+        pass
+    else:
+        #
+        lProblems.append(
+            'checkFundsInOrder() should raise FundsOutOfOrderError' )
+        #
+    #
+    iNewFundsAdded = getNewFundsAdded( sHeaderLine )
+    #
+    if iNewFundsAdded != 0:
+        #
+        print( 'iNewFundsAdded 0:', iNewFundsAdded )
+        lProblems.append(
+            'getNewFundsAdded( sHeaderLine ) returned something' )
+        #
+    #
+    lFunds.append( 'GOOG' )
+    #
+    sHeaderLineNew = getNewHeaderLine( lFunds )
+    #
+    iNewFundsAdded = getNewFundsAdded( sHeaderLineNew )
+    #
+    if iNewFundsAdded != 1:
+        #
+        print( 'iNewFundsAdded 1:', iNewFundsAdded )
+        lProblems.append(
+            'getNewFundsAdded( sHeaderLine ) should return 1' )
+        #
+    #
+    #print( dAssets )
+    #print( dTimes )
     #
     sayTestResult( lProblems )
