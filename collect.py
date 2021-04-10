@@ -302,6 +302,13 @@ if __name__ == "__main__":
     #
     lProblems = []
     #
+    sFileName = 'ETF_assets_test.csv'
+    sFileDir  = r'/tmp'
+    #
+    sLines1 = '2021-04-07 10:05,3099349198,44862202189,5992208674,223246125'
+    sLines1 = '2021-04-08 10:05,3158729570,44856763862,5980514616,222101274'
+    #
+    sHeaderLine     = getNewHeaderLine( tFunds )
     #
     lFunds = list( tFunds )
     #
