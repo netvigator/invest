@@ -177,7 +177,15 @@ def getNewHeaderLine( tFunds = tFunds ):
     return ','.join( lHeader )
 
 
-def getCsvHeaderLast( sFileDir, sFileName ):
+def getCsvHeader( sFileDir, sFileName ):
+    #
+    sHeaderLine, sLastLine = getCsvHeaderLast(
+        sFileDir, sFileName, bOnlyNeedHeader = True )
+    #
+    return sHeaderLine
+
+
+def getCsvHeaderLast( sFileDir, sFileName, bOnlyNeedHeader = False ):
     #
     sHeaderLine = sLastLine = None
     #
@@ -189,14 +197,23 @@ def getCsvHeaderLast( sFileDir, sFileName ):
             #
             for sLine in oFile:
                 #
-                sHeaderLine = sLine
+                sHeaderLine = sLine.strip()
                 #
                 break
                 #
             #
-            for sLine in oFile:
+            if bOnlyNeedHeader:
                 #
-                sLastLine = sLine
+                pass
+                #
+            else:
+                #
+                for sLine in oFile:
+                    #
+                    sLastLine = sLine
+                    #
+                #
+                sLastLine = sLastLine.strip()
                 #
             #
         #
@@ -285,30 +302,74 @@ def getNewFileAddNewFunds( iNewFundsAdded ):
     oNewFile.close()
 
 
-'''
-lAssets = [ str( dAssets[ sFund ] ) for sFund in tFunds ]
 
-sAsOf   = max( dTimes.values() )
-#
-lAssets[ 0 : 0 ] = [ str( sAsOf ) ]
+def updateFileMaybe():
+    #
+    getTotalAssetsDict()
+    #
+    sAsOf   = max( dTimes.values() )
+    #
+    lAssets = [ str( dAssets[ sFund ] ) for sFund in tFunds ]    
+    #
+    lAssets[ 0 : 0 ] = [ str( sAsOf ) ]
+    #
+    openAppendClose( ','.join( lAssets ), sFileDir, sFileName )
 
-openAppendClose( ','.join( lAssets ), sFileDir, sFileName )
 
-'''
 
 if __name__ == "__main__":
+    #
+    from difflib        import ndiff
     #
     from Utils.Result   import sayTestResult
     #
     lProblems = []
     #
-    sFileName = 'ETF_assets_test.csv'
-    sFileDir  = r'/tmp'
+    sFileName   = 'ETF_assets_test.csv'
+    sFileDir    = r'/tmp'
     #
-    sLines1 = '2021-04-07 10:05,3099349198,44862202189,5992208674,223246125'
-    sLines1 = '2021-04-08 10:05,3158729570,44856763862,5980514616,222101274'
+    sHeaderNew  = getNewHeaderLine( tFunds )
     #
-    sHeaderLine     = getNewHeaderLine( tFunds )
+    openAppendClose( sHeaderNew, sFileDir, sFileName )
+    #
+    openAppendClose(
+        '2021-04-07 10:05,3099349198,44862202189,5992208674,223246125',
+        sFileDir, sFileName )
+    openAppendClose(
+        '2021-04-08 10:05,3158729570,44856763862,5980514616,222101274',
+        sFileDir, sFileName )
+    #
+    sLastNew = '2021-04-09 10:05,3137735969,44808488311,5975887363,222330244'
+    #
+    openAppendClose( sLastNew, sFileDir, sFileName )
+    #
+    sHeaderLine, sLastLine = getCsvHeaderLast( sFileDir, sFileName )
+    #
+    if sHeaderNew != sHeaderLine:
+        #
+        print( 'sHeaderNew :', sHeaderNew  )
+        print( 'sHeaderLine:', sHeaderLine )
+        print( [ li for li in
+                 ndiff( sHeaderNew, sHeaderLine )
+                 if li[0] != ' '] )
+        #
+        lProblems.append( 'getCsvHeaderLast() sHeaderNew != sHeaderLine' )
+        #
+    #
+    if sLastNew != sLastLine:
+        #
+        print( 'sLastNew :', sLastNew  )
+        print( 'sLastLine:', sLastLine )
+        lProblems.append( 'getCsvHeaderLast() sLastNew != sLastLine' )
+        #
+    #
+    sHeaderLine = getCsvHeader( sFileDir, sFileName )
+    #
+    if sHeaderNew != sHeaderLine:
+        #
+        lProblems.append( 'getCsvHeader() sHeaderNew != sHeaderLine' )
+        #
+    #
     #
     lFunds = list( tFunds )
     #
@@ -348,7 +409,6 @@ if __name__ == "__main__":
             'getNewFundsAdded( sHeaderLine ) should return 1' )
         #
     #
-    # getTotalAssetsDict()
     # print( dAssets )
     # print( dTimes )
     #
