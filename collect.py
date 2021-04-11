@@ -31,11 +31,14 @@ face="Arial" size="2" color="#222222">$3,093,790,540</font></td>
 </tr>
 '''
 from datetime       import datetime, timedelta
+from os             import rename
 from os.path        import join
+
 import requests
 
 from pytz           import timezone
 
+from File.Del       import DeleteIfExists
 from File.Spec      import getNameNoPathNoExt
 from File.Test      import isFileThere
 from File.Write     import openAppendClose, QuickDump
@@ -46,6 +49,7 @@ from String.Get     import getTextWithinFinders as getTextIn
 from Utils.Config   import getConfDict, getTupleOffCommaString
 
 class FundsOutOfOrderError( Exception ): pass
+class NoNewUpdateYetError(  Exception ): pass
 
 dConf           = getConfDict( 'invest.ini' )
 
@@ -78,7 +82,7 @@ sFileName       = dConf['main']['name'      ]
 sFileDir        = dConf['main']['directory' ]
 
 
-def getTimeDeltaFromString( sUpdated ):
+def _getTimeDeltaFromString( sUpdated ):
     #
     lParts = sUpdated.split( ',' )
     #
@@ -94,7 +98,20 @@ def getTimeDeltaFromString( sUpdated ):
     return timedelta( **kwargs )
 
 
-def getTotalAssets( sSymbol ):
+
+def _dumpHtmlOnError( sSymbol, sMsg, sHTML ):
+    #
+    sErrorFile = 'error_%s_%s.html' % (
+            sSymbol, getNowIsoDateTimeFileNameSafe() )
+    #
+    print( r'%s, fetched HTML is in \tmp\%s' %
+            ( sMsg, sErrorFile ) )
+    #
+    QuickDump( sHTML, sErrorFile, bSayBytes = False )
+
+
+
+def _getTotalAssets( sSymbol ):
     #
     oR = requests.get( sETFpage % sSymbol.lower() )
     #
@@ -108,10 +125,23 @@ def getTotalAssets( sSymbol ):
         #
         if sTable:
             #
-            sUpdated = getTextIn( sTable, oFindAsOfBeg, oFindAsOfEnd ).strip()
+            sUpdated = getTextIn( sTable, oFindAsOfBeg, oFindAsOfEnd )
+            #
+            if sUpdated is None:
+                #
+                sMsg = 'did not find as of date'
+                #
+                _dumpHtmlOnError( sSymbol, sMsg, sHTML )
+                #
+                raise NoNewUpdateYetError( sMsg )
+                #
+            else:
+                #
+                sUpdated = sUpdated.strip()
+                #
             #
             sAsOf = getIsoDateTimeFromObj(
-                dtNow - getTimeDeltaFromString( sUpdated ) )[:16]
+                dtNow - _getTimeDeltaFromString( sUpdated ) )[:16]
             #
             sLine   = getTextIn( sTable, oFindAssetsLine, oFindAssetsNext )
             #
@@ -125,13 +155,7 @@ def getTotalAssets( sSymbol ):
             #
             # registration required to continue
             #
-            sErrorFile = 'error_%s_%s.html' % (
-                    sSymbol, getNowIsoDateTimeFileNameSafe() )
-            #
-            print( 'did not fetch table, '
-                  r'what was fetched is in \tmp\%s' % sErrorFile )
-            #
-            QuickDump( sHTML, sErrorFile, bSayBytes = False )
+            _dumpHtmlOnError( sSymbol, 'did not fetch table', sHTML )
             #
         #
     #
@@ -140,7 +164,7 @@ def getTotalAssets( sSymbol ):
 
 
 
-def getTotalAssetsDict():
+def _getTotalAssetsDict():
     #
     dPayLoad = { 'name' : sName,
                  'email': sEmail,
@@ -153,7 +177,7 @@ def getTotalAssetsDict():
         #
         for sSymbol in tFunds:
             #
-            tTotalAssets = getTotalAssets( sSymbol )
+            tTotalAssets = _getTotalAssets( sSymbol )
             #
             iTotalAssets, sAsOf = tTotalAssets
             #
@@ -169,7 +193,7 @@ def getTotalAssetsDict():
 
 
 
-def getNewHeaderLine( tFunds = tFunds ):
+def _getNewHeaderLine( tFunds = tFunds ):
     #
     lHeader = [ 'date time' ]
     lHeader.extend( tFunds )
@@ -177,21 +201,15 @@ def getNewHeaderLine( tFunds = tFunds ):
     return ','.join( lHeader )
 
 
-def getCsvHeader( sFileDir, sFileName ):
-    #
-    sHeaderLine, sLastLine = getCsvHeaderLast(
-        sFileDir, sFileName, bOnlyNeedHeader = True )
-    #
-    return sHeaderLine
 
 
-def getCsvHeaderLast( sFileDir, sFileName, bOnlyNeedHeader = False ):
+def _getCsvHeaderAndLast( sFileDir, sFileName ):
     #
     sHeaderLine = sLastLine = None
     #
     if isFileThere( sFileDir, sFileName ):
         #
-        print( '%s is there' % sFileName )
+        # print( '%s is there' % sFileName )
         #
         with open( join( sFileDir, sFileName ) ) as oFile:
             #
@@ -202,26 +220,19 @@ def getCsvHeaderLast( sFileDir, sFileName, bOnlyNeedHeader = False ):
                 break
                 #
             #
-            if bOnlyNeedHeader:
+            for sLine in oFile:
                 #
                 pass
                 #
-            else:
-                #
-                for sLine in oFile:
-                    #
-                    sLastLine = sLine
-                    #
-                #
-                sLastLine = sLastLine.strip()
-                #
+            #
+            sLastLine = sLine.strip()
             #
         #
     else:
         #
         print( '%s is NOT there' % sFileName )
         #
-        sHeaderLineNew = getNewHeaderLine()
+        sHeaderLineNew = _getNewHeaderLine()
         #
         openAppendClose( sHeaderLineNew, sFileDir, sFileName )
         #
@@ -231,24 +242,21 @@ def getCsvHeaderLast( sFileDir, sFileName, bOnlyNeedHeader = False ):
     return sHeaderLine, sLastLine
 
 
-sHeaderLine, sLastLine = getCsvHeaderLast( sFileDir, sFileName )
-
-print( 'header line:', sHeaderLine.strip() )
-print( 'last   line:', sLastLine.strip()  )
+sHeaderLine, sLastLine = _getCsvHeaderAndLast( sFileDir, sFileName )
 
 
-def getNewFundsAdded( sHeaderLine ):
+def _getNewFundsAdded( sHeaderLine ):
     #
     return ( sHeaderLine and
              len( sHeaderLine.split(',') ) - ( len( tFunds ) + 1 ) )
 
 
-iNewFundsAdded = getNewFundsAdded( sHeaderLine )
+iNewFundsAdded = _getNewFundsAdded( sHeaderLine )
 
 
-def checkFundsInOrder( sHeaderLinePrior ):
+def _checkFundsInOrder( sHeaderLinePrior ):
     #
-    sHeaderLineNew   = getNewHeaderLine()
+    sHeaderLineNew   = _getNewHeaderLine()
     #
     lHeaderLinePrior = sHeaderLinePrior.split(',')
     lHeaderLineNew   = sHeaderLineNew.split(',')
@@ -264,9 +272,11 @@ def checkFundsInOrder( sHeaderLinePrior ):
 
 
 
-def getNewFileAddNewFunds( iNewFundsAdded ):
+def _getNewFileAddNewFunds( tFundsUpdate, iNewFundsAdded, sFileDir, sFileName ):
     #
     sNewFile = '%s.new' % getNameNoPathNoExt( sFileName )
+    #
+    DeleteIfExists( sFileDir, sNewFile )
     #
     oNewFile = open( join( sFileDir, sNewFile ), 'w' )
     #
@@ -281,46 +291,88 @@ def getNewFileAddNewFunds( iNewFundsAdded ):
             break
             #
         #
-        checkFundsInOrder( sHeaderLinePrior )
+        # _checkFundsInOrder( sHeaderLinePrior ) already checked
         #
         iWantLen = 1 + len( tFunds )
         #
-        sNewFile.write( sAppendLine % getNewHeaderLine() )
+        oNewFile.write( sAppendLine % _getNewHeaderLine( tFundsUpdate ) )
         #
-        lMoreZeros = [0] * iNewFundsAdded
+        lMoreZeros = ['0'] * iNewFundsAdded
         #
         for sLine in oFile:
             #
-            lLine = sLine.split(',')
+            lLine = sLine.strip().split(',')
             #
             lLine.extend( lMoreZeros )
             #
-            sNewFile.write( sAppendLine % ','.join( lLine ) )
+            oNewFile.write( sAppendLine % ','.join( lLine ) )
             #
         #
     #
     oNewFile.close()
+    #
+    sBackFile = '%s.bak' % getNameNoPathNoExt( sFileName )
+    #
+    DeleteIfExists( sFileDir, sBackFile )
+    #
+    rename( join( sFileDir, sFileName ), join( sFileDir, sBackFile ) )
+    #
+    rename( join( sFileDir, sNewFile  ), join( sFileDir, sFileName ) )
+    #
 
+
+
+def _updateFileMaybe(
+            tFunds      = tFunds,
+            dAssets     = dAssets,
+            dTimes      = dTimes,
+            sFileDir    = sFileDir,
+            sFileName   = sFileName ):
+    #
+    #
+    sAsOf                   = max( dTimes.values() )
+    #
+    sHeaderLine, sLastLine  = _getCsvHeaderAndLast( sFileDir, sFileName )
+    #
+    _checkFundsInOrder( sHeaderLine )
+    #
+    iNewFundsAdded          = _getNewFundsAdded( sHeaderLine )
+    #
+    if iNewFundsAdded:
+        #
+        _getNewFileAddNewFunds( tFunds, iNewFundsAdded, sFileDir, sFileName )
+        #
+    #
+    bGotNewAssetNumbs       = sAsOf[:10] > sLastLine[:10]
+    #
+    if bGotNewAssetNumbs:
+        #
+        lAssets = [ str( dAssets[ sFund ] ) for sFund in tFunds ]
+        #
+        lAssets[ 0 : 0 ]    = [ str( sAsOf ) ]
+        #
+        openAppendClose( ','.join( lAssets ), sFileDir, sFileName )
 
 
 def updateFileMaybe():
     #
-    getTotalAssetsDict()
-    #
-    sAsOf   = max( dTimes.values() )
-    #
-    lAssets = [ str( dAssets[ sFund ] ) for sFund in tFunds ]    
-    #
-    lAssets[ 0 : 0 ] = [ str( sAsOf ) ]
-    #
-    openAppendClose( ','.join( lAssets ), sFileDir, sFileName )
-
+    try:
+        #
+        _getTotalAssetsDict()
+        #
+        _updateFileMaybe( tFunds, dAssets, dTimes, sFileDir, sFileName )
+        #
+    except NoNewUpdateYetError:
+        #
+        pass
+        #
 
 
 if __name__ == "__main__":
     #
     from difflib        import ndiff
     #
+    from File.Info      import getLineCount
     from Utils.Result   import sayTestResult
     #
     lProblems = []
@@ -328,7 +380,11 @@ if __name__ == "__main__":
     sFileName   = 'ETF_assets_test.csv'
     sFileDir    = r'/tmp'
     #
-    sHeaderNew  = getNewHeaderLine( tFunds )
+    tFunds      = ( 'SPYD','VYM','VPU','DIV' )
+    #
+    sHeaderNew  = _getNewHeaderLine( tFunds )
+    #
+    DeleteIfExists( sFileDir, sFileName )
     #
     openAppendClose( sHeaderNew, sFileDir, sFileName )
     #
@@ -343,7 +399,15 @@ if __name__ == "__main__":
     #
     openAppendClose( sLastNew, sFileDir, sFileName )
     #
-    sHeaderLine, sLastLine = getCsvHeaderLast( sFileDir, sFileName )
+    iLineCount = getLineCount( sFileDir, sFileName )
+    #
+    if iLineCount != 4:
+        #
+        lProblems.append( 'expecting 4 lines, instead got %s' % iLineCount )
+        #
+    #
+    #
+    sHeaderLine, sLastLine = _getCsvHeaderAndLast( sFileDir, sFileName )
     #
     if sHeaderNew != sHeaderLine:
         #
@@ -353,21 +417,14 @@ if __name__ == "__main__":
                  ndiff( sHeaderNew, sHeaderLine )
                  if li[0] != ' '] )
         #
-        lProblems.append( 'getCsvHeaderLast() sHeaderNew != sHeaderLine' )
+        lProblems.append( '_getCsvHeaderAndLast() sHeaderNew != sHeaderLine' )
         #
     #
     if sLastNew != sLastLine:
         #
         print( 'sLastNew :', sLastNew  )
         print( 'sLastLine:', sLastLine )
-        lProblems.append( 'getCsvHeaderLast() sLastNew != sLastLine' )
-        #
-    #
-    sHeaderLine = getCsvHeader( sFileDir, sFileName )
-    #
-    if sHeaderNew != sHeaderLine:
-        #
-        lProblems.append( 'getCsvHeader() sHeaderNew != sHeaderLine' )
+        lProblems.append( '_getCsvHeaderAndLast() sLastNew != sLastLine' )
         #
     #
     #
@@ -375,38 +432,104 @@ if __name__ == "__main__":
     #
     lFunds.reverse()
     #
-    sHeaderLinePrior = getNewHeaderLine( lFunds )
+    sHeaderLinePrior = _getNewHeaderLine( lFunds )
     #
     try:
-        checkFundsInOrder( sHeaderLinePrior )
+        _checkFundsInOrder( sHeaderLinePrior )
     except FundsOutOfOrderError:
         pass
     else:
         #
         lProblems.append(
-            'checkFundsInOrder() should raise FundsOutOfOrderError' )
+            '_checkFundsInOrder() should raise FundsOutOfOrderError' )
         #
     #
-    iNewFundsAdded = getNewFundsAdded( sHeaderLine )
+    iNewFundsAdded = _getNewFundsAdded( sHeaderLine )
     #
     if iNewFundsAdded != 0:
         #
         print( 'iNewFundsAdded 0:', iNewFundsAdded )
         lProblems.append(
-            'getNewFundsAdded( sHeaderLine ) returned something' )
+            '_getNewFundsAdded( sHeaderLine ) returned something' )
         #
+    #
+    # this info repeats the last line
+    #
+    dAssets     = dict( SPYD =  3137735969,
+                        VYM  = 44808488311,
+                        VPU  =  5992208674,
+                        DIV  =   222330244 )
+    #
+    dTimes      = dict.fromkeys( tFunds, '2021-04-09 10:05' )
+    #
+    _updateFileMaybe( tFunds, dAssets, dTimes, sFileDir, sFileName )
+    #
+    iLineCount = getLineCount( sFileDir, sFileName )
+    #
+    if iLineCount != 4:
+        #
+        lProblems.append(
+            'after re-adding the same last line, '
+            'expecting 4 lines, instead got %s'
+            % iLineCount )
+        #
+    #
+    dAssets     = dict( SPYD =  3137735988,
+                        VYM  = 44808488348,
+                        VPU  =  5992208888,
+                        DIV  =   222330288 )
+    #
+    dTimes      = dict.fromkeys( tFunds, '2021-04-12 10:05' )
+    #
+    _updateFileMaybe( tFunds, dAssets, dTimes, sFileDir, sFileName )
+    #
+    iLineCount = getLineCount( sFileDir, sFileName )
+    #
+    if iLineCount != 5:
+        #
+        lProblems.append(
+            'added new last line for next trading day, '
+            'expecting 5 lines, instead got %s'
+            % iLineCount )
+        #
+    #
+    #
+    #
     #
     lFunds.append( 'GOOG' )
     #
-    sHeaderLineNew = getNewHeaderLine( lFunds )
+    sHeaderLineNew = _getNewHeaderLine( lFunds )
     #
-    iNewFundsAdded = getNewFundsAdded( sHeaderLineNew )
+    iNewFundsAdded = _getNewFundsAdded( sHeaderLineNew )
     #
     if iNewFundsAdded != 1:
         #
         print( 'iNewFundsAdded 1:', iNewFundsAdded )
         lProblems.append(
-            'getNewFundsAdded( sHeaderLine ) should return 1' )
+            '_getNewFundsAdded( sHeaderLine ) should return 1' )
+        #
+    #
+    _getNewFileAddNewFunds( lFunds, iNewFundsAdded, sFileDir, sFileName )
+    #
+    iLineCount = getLineCount( sFileDir, sFileName )
+    #
+    if iLineCount != 5:
+        #
+        lProblems.append(
+            'after adding a new fund, expecting 5 lines, instead got %s'
+            % iLineCount )
+        #
+    #
+    sBackFile = '%s.bak' % getNameNoPathNoExt( sFileName )
+    #
+    iLineCount = getLineCount( sFileDir, sBackFile )
+    #
+    if iLineCount != 5:
+        #
+        lProblems.append(
+            'bak file should have original line count, '
+            'expecting 5 lines, instead got %s'
+            % iLineCount )
         #
     #
     # print( dAssets )
