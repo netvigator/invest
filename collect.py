@@ -32,7 +32,7 @@ face="Arial" size="2" color="#222222">$3,093,790,540</font></td>
 '''
 from datetime       import datetime, timedelta
 from os             import rename
-from os.path        import join
+from os.path        import join, expanduser
 
 import requests
 
@@ -79,7 +79,8 @@ sEmail          = dConf['credentials']['email']
 sLogInURL       = dConf['credentials']['url'  ]
 
 sFileName       = dConf['main']['name'      ]
-sFileDir        = dConf['main']['directory' ]
+sFileDir        = expanduser(
+                  dConf['main']['directory' ] )
 
 
 def _getTimeDeltaFromString( sUpdated ):
