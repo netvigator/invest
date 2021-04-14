@@ -53,7 +53,8 @@ class NoNewUpdateYetError(  Exception ): pass
 
 dConf           = getConfDict( 'invest.ini' )
 
-tFunds          = getTupleOffCommaString( dConf['main']['funds'] )
+sFunds          = dConf['main']['funds']
+tFunds          = getTupleOffCommaString( sFunds )
 
 dAssets         = dict.fromkeys( tFunds )
 dTimes          = dict.fromkeys( tFunds )
@@ -93,7 +94,10 @@ def _getTimeDeltaFromString( sUpdated ):
         #
         lSubParts = sPart.split( ' ' )
         #
-        kwargs[ lSubParts[ -1 ] ] = int( lSubParts[ -2 ] )
+        kwarg = '%s%s' % ( lSubParts[ -1 ],
+                     '' if lSubParts[ -1 ].endswith('s') else 's' )
+        #
+        kwargs[ kwarg ] = int( lSubParts[ -2 ] )
         #
     #
     return timedelta( **kwargs )
