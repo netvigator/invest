@@ -35,6 +35,7 @@ from os             import rename
 from os.path        import join, expanduser
 
 import requests
+from cloudscraper   import create_scraper
 
 from pytz           import timezone
 
@@ -42,6 +43,7 @@ from File.Del       import DeleteIfExists
 from File.Spec      import getNameNoPathNoExt
 from File.Test      import isFileThere
 from File.Write     import openAppendClose, QuickDump
+from Object.Get     import ValueContainer
 from String.Find    import getRegExObj
 from Time.Convert   import getIsoDateTimeFromObj
 from Time.Output    import getNowIsoDateTimeFileNameSafe
@@ -59,34 +61,53 @@ tFunds          = getTupleOffCommaString( sFunds )
 dAssets         = dict.fromkeys( tFunds )
 dTimes          = dict.fromkeys( tFunds )
 
-sETFpage        = dConf['source']['url']
+sAssetsPage     = dConf['assets']['url']
 
 tzEast          = timezone( 'US/Eastern' )
 
 dtNow           = datetime.now( tz = tzEast )
 
-oFindAsOfHead   = getRegExObj( dConf['source']['as_of_head' ] )
-oFindNextHead   = getRegExObj( dConf['source']['next_head'  ] )
-oFindAsOfBeg    = getRegExObj( dConf['source']['beg_as_of'  ] )
-oFindAsOfEnd    = getRegExObj( dConf['source']['end_as_of'  ] )
+oFindAsOfHead   = getRegExObj( dConf['assets']['as_of_head' ] )
+oFindNextHead   = getRegExObj( dConf['assets']['next_head'  ] )
+oFindAsOfBeg    = getRegExObj( dConf['assets']['beg_as_of'  ] )
+oFindAsOfEnd    = getRegExObj( dConf['assets']['end_as_of'  ] )
 
-oFindAssetsLine = getRegExObj( dConf['source']['assets_desc'] )
-oFindAssetsNext = getRegExObj( dConf['source']['next_desc'  ] )
-oFindAssetsBeg  = getRegExObj( dConf['source']['beg_assets' ] )
-oFindAssetsEnd  = getRegExObj( dConf['source']['end_assets' ] )
+oFindAssetsLine = getRegExObj( dConf['assets']['assets_desc'] )
+oFindAssetsNext = getRegExObj( dConf['assets']['next_desc'  ] )
+oFindAssetsBeg  = getRegExObj( dConf['assets']['beg_assets' ] )
+oFindAssetsEnd  = getRegExObj( dConf['assets']['end_assets' ] )
 
 sName           = dConf['credentials']['name' ]
 sEmail          = dConf['credentials']['email']
 sLogInURL       = dConf['credentials']['url'  ]
 
-sFileName       = dConf['main']['name'      ]
+
+sFlowsPage      = dConf['flows']['url'        ]
+sTickersField   = dConf['flows']['ticker_box' ]
+sBegDateField   = dConf['flows']['beg_date'   ]
+sEndDateField   = dConf['flows']['end_date'   ]
+
+oFlowsHead      = getRegExObj( dConf['flows']['flows_head'] )
+oFlowsEnd       = getRegExObj( dConf['flows']['flows_end' ] )
+oSymbolBeg      = getRegExObj( dConf['flows']['symbol_beg'] )
+sSymbolEnd      =              dConf['flows']['symbol_end']
+oFlowBeg        = getRegExObj( dConf['flows']['flow_beg'  ] )
+oFlowEnd        = getRegExObj( dConf['flows']['flow_end'  ] )
+
+
+
+
+
+
+sAssetsFile     = dConf['main']['assets_file']
+sFlowsFile      = dConf['main']['flows_file' ]
 sFileDir        = expanduser(
-                  dConf['main']['directory' ] )
+                  dConf['main']['directory'  ] )
 
 
 def _getTimeDeltaFromString( sUpdated ):
     #
-    lParts = sUpdated.split( ',' )
+    lParts = sUpdated.strip().split( ',' )
     #
     kwargs = {}
     #
@@ -94,10 +115,12 @@ def _getTimeDeltaFromString( sUpdated ):
         #
         lSubParts = sPart.split( ' ' )
         #
-        kwarg = '%s%s' % ( lSubParts[ -1 ],
-                     '' if lSubParts[ -1 ].endswith('s') else 's' )
+        kwarg = lSubParts[ -1 ]
         #
-        kwargs[ kwarg ] = int( lSubParts[ -2 ] )
+        if kwarg in ( 'minutes', 'hours' ):
+            #
+            kwargs[ kwarg ] = int( lSubParts[ -2 ] )
+            #
         #
     #
     return timedelta( **kwargs )
@@ -116,9 +139,19 @@ def _dumpHtmlOnError( sSymbol, sMsg, sHTML ):
 
 
 
-def _getTotalAssets( sSymbol ):
+def _getTotalAssets( sSymbol, sTestHTML = None ):
     #
-    oR = requests.get( sETFpage % sSymbol.lower() )
+    if sTestHTML is None:
+        #
+        oR = requests.get( sAssetsPage % sSymbol.lower() )
+        #
+    else:
+        #
+        oR = ValueContainer()
+        #
+        oR.status_code  = 200
+        oR.text         = sTestHTML
+        #
     #
     tReturn = ( None, None )
     #
@@ -247,7 +280,7 @@ def _getCsvHeaderAndLast( sFileDir, sFileName ):
     return sHeaderLine, sLastLine
 
 
-sHeaderLine, sLastLine = _getCsvHeaderAndLast( sFileDir, sFileName )
+sHeaderLine, sLastLine = _getCsvHeaderAndLast( sFileDir, sAssetsFile )
 
 
 def _getNewFundsAdded( sHeaderLine ):
@@ -326,51 +359,135 @@ def _getNewFileAddNewFunds( tFundsUpdate, iNewFundsAdded, sFileDir, sFileName ):
     #
 
 
+# _updateMaybe( tFunds, dFlows, sDateYesterday, sFileDir, sFlowsFile )
 
-def _updateFileMaybe(
-            tFunds      = tFunds,
-            dAssets     = dAssets,
-            dTimes      = dTimes,
-            sFileDir    = sFileDir,
-            sFileName   = sFileName ):
+def _updateMaybe( tFunds, dValues, sTimeStamp, sFileDir, sFileName ):
     #
-    #
-    sAsOf                   = max( dTimes.values() )
     #
     sHeaderLine, sLastLine  = _getCsvHeaderAndLast( sFileDir, sFileName )
     #
     _checkFundsInOrder( sHeaderLine )
     #
-    iNewFundsAdded          = _getNewFundsAdded( sHeaderLine )
+    iNewFundsAdded    = _getNewFundsAdded( sHeaderLine )
     #
     if iNewFundsAdded:
         #
         _getNewFileAddNewFunds( tFunds, iNewFundsAdded, sFileDir, sFileName )
         #
     #
-    bGotNewAssetNumbs       = sAsOf[:10] > sLastLine[:10]
+    bGotNewAssetNumbs = sLastLine is None or sTimeStamp[:10] > sLastLine[:10]
     #
     if bGotNewAssetNumbs:
         #
-        lAssets = [ str( dAssets[ sFund ] ) for sFund in tFunds ]
+        lAssets = [ str( dValues[ sFund ] ) for sFund in tFunds ]
         #
-        lAssets[ 0 : 0 ]    = [ str( sAsOf ) ]
+        lAssets[ 0 : 0 ]    = [ sTimeStamp ]
         #
         openAppendClose( ','.join( lAssets ), sFileDir, sFileName )
 
 
-def updateFileMaybe():
+def updateAssetsFileMaybe():
     #
     try:
         #
         _getTotalAssetsDict()
         #
-        _updateFileMaybe( tFunds, dAssets, dTimes, sFileDir, sFileName )
+        sAsOf = max( dTimes.values() )
+        #
+        _updateMaybe( tFunds, dAssets, sAsOf, sFileDir, sAssetsFile )
         #
     except NoNewUpdateYetError:
         #
         pass
         #
+
+
+def _getFlowsDictFromHTML( sHTML ):
+    #
+    dFlows      = dict.fromkeys( tFunds )
+    #
+    sTable      = getTextIn( sHTML, oFlowsHead, oFlowsEnd )
+    #
+    # QuickDump( sTable, 'ETF_flows_table.html', bSayBytes = False )
+    #
+    lParts = oSymbolBeg.split( sTable )
+    #
+    for i, sRow in enumerate( lParts ):
+        #
+        if i: # skip the one with zero for the index
+            #
+            iEndSymbol  = sRow.find( sSymbolEnd )
+            #
+            sFund       = sRow[ : iEndSymbol ]
+            #
+            fFlow       = float(
+                    getTextIn( sRow,   oFlowBeg,   oFlowEnd   ) )
+            #
+            dFlows[ sFund ] = fFlow
+            #
+        #
+    #
+    return dFlows
+
+
+
+ 
+
+
+
+
+def _getFlowsDict():
+    #
+    dFlows      = dict.fromkeys( tFunds )
+    #
+    dtYesterday = dtNow - timedelta( days = 1 ) 
+    #
+    sDateYesterday = getIsoDateTimeFromObj( dtYesterday )[ : 10 ]
+    #
+    dPayLoad = {
+            sTickersField : sFunds,
+            sBegDateField : sDateYesterday,
+            sEndDateField : sDateYesterday }
+    #
+    oScraper    = create_scraper( browser='chrome' )
+    #
+    oGetFlows   = oScraper.post( sFlowsPage, data = dPayLoad )
+    #
+    if oGetFlows.status_code == 200:
+        #
+        dFlows = _getFlowsDictFromHTML( oGetFlows.text )
+        #
+    else:
+        #
+        print( 'oGetFlows.status_code:', str( oGetFlows.status_code ) )
+        #
+        QuickDump( oGetFlows.text, 'ETF_flows.html', bSayBytes = False )
+        #
+    #
+    return dFlows, sDateYesterday
+
+
+
+def _updateFlowsMaybe( tFunds, dFlows, sDateYesterday, sFileDir, sFlowsFile ):
+    #
+    pass
+
+
+def updateFlowsFileMaybe():
+    #
+    try:
+        #
+        dFlows, sDateYesterday = _getFlowsDict()
+        #
+        #print( 'dFlows:', dFlows )
+        #print( 'yesterday:', sDateYesterday )
+        _updateMaybe( tFunds, dFlows, sDateYesterday, sFileDir, sFlowsFile )
+        #
+    except NoNewUpdateYetError:
+        #
+        pass
+        #
+
 
 
 if __name__ == "__main__":
@@ -380,31 +497,33 @@ if __name__ == "__main__":
     from File.Info      import getLineCount
     from Utils.Result   import sayTestResult
     #
+    from __init__       import EXAMPLE_FLOW_PAGE, EXAMPLE_ASSETS_PAGE
+    #
     lProblems = []
     #
-    sFileName   = 'ETF_assets_test.csv'
+    sAssetsTest   = 'ETF_assets_test.csv'
     sFileDir    = r'/tmp'
     #
     tFunds      = ( 'SPYD','VYM','VPU','DIV' )
     #
     sHeaderNew  = _getNewHeaderLine( tFunds )
     #
-    DeleteIfExists( sFileDir, sFileName )
+    DeleteIfExists( sFileDir, sAssetsTest )
     #
-    openAppendClose( sHeaderNew, sFileDir, sFileName )
+    openAppendClose( sHeaderNew, sFileDir, sAssetsTest )
     #
     openAppendClose(
         '2021-04-07 10:05,3099349198,44862202189,5992208674,223246125',
-        sFileDir, sFileName )
+        sFileDir, sAssetsTest )
     openAppendClose(
         '2021-04-08 10:05,3158729570,44856763862,5980514616,222101274',
-        sFileDir, sFileName )
+        sFileDir, sAssetsTest )
     #
     sLastNew = '2021-04-09 10:05,3137735969,44808488311,5975887363,222330244'
     #
-    openAppendClose( sLastNew, sFileDir, sFileName )
+    openAppendClose( sLastNew, sFileDir, sAssetsTest )
     #
-    iLineCount = getLineCount( sFileDir, sFileName )
+    iLineCount = getLineCount( sFileDir, sAssetsTest )
     #
     if iLineCount != 4:
         #
@@ -412,7 +531,7 @@ if __name__ == "__main__":
         #
     #
     #
-    sHeaderLine, sLastLine = _getCsvHeaderAndLast( sFileDir, sFileName )
+    sHeaderLine, sLastLine = _getCsvHeaderAndLast( sFileDir, sAssetsTest )
     #
     if sHeaderNew != sHeaderLine:
         #
@@ -465,11 +584,11 @@ if __name__ == "__main__":
                         VPU  =  5992208674,
                         DIV  =   222330244 )
     #
-    dTimes      = dict.fromkeys( tFunds, '2021-04-09 10:05' )
+    sAsOf = '2021-04-09 10:05'
     #
-    _updateFileMaybe( tFunds, dAssets, dTimes, sFileDir, sFileName )
+    _updateMaybe( tFunds, dAssets, sAsOf, sFileDir, sAssetsTest )
     #
-    iLineCount = getLineCount( sFileDir, sFileName )
+    iLineCount = getLineCount( sFileDir, sAssetsTest )
     #
     if iLineCount != 4:
         #
@@ -484,11 +603,11 @@ if __name__ == "__main__":
                         VPU  =  5992208888,
                         DIV  =   222330288 )
     #
-    dTimes      = dict.fromkeys( tFunds, '2021-04-12 10:05' )
+    sAsOf = '2021-04-12 10:05'
     #
-    _updateFileMaybe( tFunds, dAssets, dTimes, sFileDir, sFileName )
+    _updateMaybe( tFunds, dAssets, sAsOf, sFileDir, sAssetsTest )
     #
-    iLineCount = getLineCount( sFileDir, sFileName )
+    iLineCount = getLineCount( sFileDir, sAssetsTest )
     #
     if iLineCount != 5:
         #
@@ -514,9 +633,9 @@ if __name__ == "__main__":
             '_getNewFundsAdded( sHeaderLine ) should return 1' )
         #
     #
-    _getNewFileAddNewFunds( lFunds, iNewFundsAdded, sFileDir, sFileName )
+    _getNewFileAddNewFunds( lFunds, iNewFundsAdded, sFileDir, sAssetsTest )
     #
-    iLineCount = getLineCount( sFileDir, sFileName )
+    iLineCount = getLineCount( sFileDir, sAssetsTest )
     #
     if iLineCount != 5:
         #
@@ -525,7 +644,7 @@ if __name__ == "__main__":
             % iLineCount )
         #
     #
-    sBackFile = '%s.bak' % getNameNoPathNoExt( sFileName )
+    sBackFile = '%s.bak' % getNameNoPathNoExt( sAssetsTest )
     #
     iLineCount = getLineCount( sFileDir, sBackFile )
     #
@@ -537,7 +656,37 @@ if __name__ == "__main__":
             % iLineCount )
         #
     #
-    # print( dAssets )
-    # print( dTimes )
+    tReturn = _getTotalAssets( 'SPYD', sTestHTML = EXAMPLE_ASSETS_PAGE )
+    #
+    sUpdated = ' 7 hours, 2 minutes '
+    #
+    s7hours2minutesAgo = getIsoDateTimeFromObj(
+                dtNow - _getTimeDeltaFromString( sUpdated ) )[:16]
+    #
+    if tReturn != ( 3162766801, s7hours2minutesAgo ):
+        #
+        lProblems.append( '_getTotalAssets() and EXAMPLE_ASSETS_PAGE' )
+        #
+        print( tReturn[1] )
+        print( s7hours2minutesAgo )
+        #
+        print( [ li for li in
+                    ndiff( tReturn[1], s7hours2minutesAgo )
+                    if li[0] != ' '] )
+        #
+    #
+    '''
+    print( oFlowBeg )
+    print( oFlowEnd )
+    '''
+    dFlows = _getFlowsDictFromHTML( EXAMPLE_FLOW_PAGE )
+    #
+    dExpect = {'SPYD': 15.66, 'VYM': 38.45, 'VPU': 10.67, 'DIV': 1.79}
+    #
+    if dFlows != dExpect:
+        #
+        lProblems.append( '_getFlowsDictFromHTML' )
+        #
+    #
     #
     sayTestResult( lProblems )
