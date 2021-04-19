@@ -39,6 +39,7 @@ from cloudscraper   import create_scraper
 
 from pytz           import timezone
 
+from Collect.Query  import gotAnyNone
 from File.Del       import DeleteIfExists
 from File.Spec      import getNameNoPathNoExt
 from File.Test      import isFileThere
@@ -440,7 +441,7 @@ def _getFlowsDict():
     #
     dFlows      = dict.fromkeys( tFunds )
     #
-    dtYesterday = dtNow - timedelta( days = 1 ) 
+    dtYesterday = dtNow - timedelta( days = 1 )
     #
     sDateYesterday = getIsoDateTimeFromObj( dtYesterday )[ : 10 ]
     #
@@ -456,6 +457,17 @@ def _getFlowsDict():
     if oGetFlows.status_code == 200:
         #
         dFlows = _getFlowsDictFromHTML( oGetFlows.text )
+        #
+        if gotAnyNone( dFlows.values() ):
+            #
+            sMsg = '_getFlowsDict() got None, HTML in /tmp/ETF_flows.html'
+            #
+            print( sMsg )
+            #
+            QuickDump( oGetFlows.text, 'ETF_flows.html', bSayBytes = False )
+            #
+            raise NoNewUpdateYetError( sMsg )
+            #
         #
     else:
         #
