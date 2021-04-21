@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+PYTHONPATH=/home/Common/pyPacks
+export PYTHONPATH
 cd ~/Devel/invest
 source ~/.virtualenvs/invest/bin/activate
 python -c "from collect import updateAssetsFileMaybe, updateFlowsFileMaybe; updateAssetsFileMaybe(); updateFlowsFileMaybe()"
