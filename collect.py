@@ -33,6 +33,7 @@ face="Arial" size="2" color="#222222">$3,093,790,540</font></td>
 from datetime       import datetime, timedelta
 from os             import rename
 from os.path        import join, expanduser
+from time           import sleep
 
 import requests
 from cloudscraper   import create_scraper
@@ -47,6 +48,7 @@ from File.Write     import openAppendClose, QuickDump
 from Object.Get     import ValueContainer
 from String.Find    import getRegExObj
 from Time.Convert   import getIsoDateTimeFromObj
+from Time.Date      import getPriorWeekday
 from Time.Output    import getNowIsoDateTimeFileNameSafe
 from String.Get     import getTextWithinFinders as getTextIn
 from Utils.Config   import getConfDict, getTupleOffCommaString
@@ -360,7 +362,7 @@ def _getNewFileAddNewFunds( tFundsUpdate, iNewFundsAdded, sFileDir, sFileName ):
     #
 
 
-# _updateMaybe( tFunds, dFlows, sDateYesterday, sFileDir, sFlowsFile )
+# _updateMaybe( tFunds, dFlows, sDatePrior, sFileDir, sFlowsFile )
 
 def _updateMaybe( tFunds, dValues, sTimeStamp, sFileDir, sFileName ):
     #
@@ -436,51 +438,93 @@ def _getFlowsDictFromHTML( sHTML ):
 
 
 
-
 def _getFlowsDict():
     #
     dFlows      = dict.fromkeys( tFunds )
     #
-    dtYesterday = dtNow - timedelta( days = 1 )
+    # handle long weekends
     #
-    sDateYesterday = getIsoDateTimeFromObj( dtYesterday )[ : 10 ]
+    iMaxDaysAgo = 5
     #
-    dPayLoad = {
-            sTickersField : sFunds,
-            sBegDateField : sDateYesterday,
-            sEndDateField : sDateYesterday }
+    # handle long weekends and end on a weekday
     #
-    oScraper    = create_scraper( browser='chrome' )
+    oPriorWeekDay = getPriorWeekday( dtNow - timedelta( days = iMaxDaysAgo ) )
     #
-    oGetFlows   = oScraper.post( sFlowsPage, data = dPayLoad )
+    oDeltaDays = dtNow - oPriorWeekDay
     #
-    if oGetFlows.status_code == 200:
+    # in case need to (raise NoNewUpdateYetError)
+    #
+    iMaxDaysAgo = oDeltaDays.days + 1
+    #
+    for i in range( iMaxDaysAgo ):
         #
-        dFlows = _getFlowsDictFromHTML( oGetFlows.text )
+        dtPriorDay = dtNow - timedelta( days = 1 + i )
         #
-        if gotAnyNone( dFlows.values() ):
+        # starts at yesterday,
+        # if no data for yesterday, steps back day by day
+        # until it finds a day with data
+        #
+        if dtPriorDay.weekday() > 4:
             #
-            sMsg = '_getFlowsDict() got None, HTML in /tmp/ETF_flows.html'
+            # date.weekday() returns the day of the week as an integer,
+            # where Monday is 0 and Sunday is 6
             #
-            print( sMsg )
+            continue # no data on weekends
+            #
+        #
+        sDatePrior = getIsoDateTimeFromObj( dtPriorDay )[ : 10 ]
+        #
+        dPayLoad = {
+                sTickersField : sFunds,
+                sBegDateField : sDatePrior,
+                sEndDateField : sDatePrior }
+        #
+        oScraper    = create_scraper( browser = 'chrome' )
+        #
+        oGetFlows   = oScraper.post( sFlowsPage, data = dPayLoad )
+        #
+        if oGetFlows.status_code == 200:
+            #
+            dFlows = _getFlowsDictFromHTML( oGetFlows.text )
+            #
+            bGotNone = gotAnyNone( dFlows.values() )
+            #
+            if bGotNone and i == ( iMaxDaysAgo - 1 ):
+                #
+                sMsg = '_getFlowsDict() got None, HTML in /tmp/ETF_flows.html'
+                #
+                print( sMsg )
+                #
+                QuickDump( oGetFlows.text, 'ETF_flows.html', bSayBytes = False )
+                #
+                raise NoNewUpdateYetError( sMsg )
+                #
+            elif bGotNone:
+                #
+                continue # try the prior day
+                #
+            else:
+                #
+                break
+                #
+            #
+        else:
+            #
+            print( 'oGetFlows.status_code:', str( oGetFlows.status_code ) )
             #
             QuickDump( oGetFlows.text, 'ETF_flows.html', bSayBytes = False )
             #
-            raise NoNewUpdateYetError( sMsg )
+            break
             #
         #
-    else:
-        #
-        print( 'oGetFlows.status_code:', str( oGetFlows.status_code ) )
-        #
-        QuickDump( oGetFlows.text, 'ETF_flows.html', bSayBytes = False )
+        sleep(2)
         #
     #
-    return dFlows, sDateYesterday
+    return dFlows, sDatePrior
 
 
 
-def _updateFlowsMaybe( tFunds, dFlows, sDateYesterday, sFileDir, sFlowsFile ):
+def _updateFlowsMaybe( tFunds, dFlows, sDatePrior, sFileDir, sFlowsFile ):
     #
     pass
 
@@ -489,11 +533,11 @@ def updateFlowsFileMaybe():
     #
     try:
         #
-        dFlows, sDateYesterday = _getFlowsDict()
+        dFlows, sDatePrior = _getFlowsDict()
         #
         #print( 'dFlows:', dFlows )
-        #print( 'yesterday:', sDateYesterday )
-        _updateMaybe( tFunds, dFlows, sDateYesterday, sFileDir, sFlowsFile )
+        #print( 'yesterday:', sDatePrior )
+        _updateMaybe( tFunds, dFlows, sDatePrior, sFileDir, sFlowsFile )
         #
     except NoNewUpdateYetError:
         #
